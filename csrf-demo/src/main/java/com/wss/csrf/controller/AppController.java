@@ -1,56 +1,57 @@
 package com.wss.csrf.controller;
 
+import com.wss.csrf.model.AppUser;
 import com.wss.csrf.service.UserService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-@Controller
-public class AppController {
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api")
+public class ApiController {
 
     private final UserService userService;
 
     @Value("${app.csrf.protection:false}")
     private boolean csrfProtection;
 
-    public AppController(UserService userService) {
+    public ApiController(UserService userService) {
         this.userService = userService;
     }
 
-    @GetMapping("/")
-    public String home() {
-        return "redirect:/login";
-    }
-
-    @GetMapping("/login")
-    public String login() {
-        return "login";
-    }
-
-    @GetMapping("/dashboard")
-    public String dashboard(@AuthenticationPrincipal UserDetails userDetails, Model model) {
-        model.addAttribute("user", userService.getUser(userDetails.getUsername()));
-        model.addAttribute("csrfProtection", csrfProtection);
-        return "dashboard";
+    @GetMapping("/me")
+    public ResponseEntity<Map<String, Object>> me(@AuthenticationPrincipal UserDetails userDetails) {
+        AppUser user = userService.getUser(userDetails.getUsername());
+        return ResponseEntity.ok(Map.of(
+            "username", user.getUsername(),
+            "role", user.getRole(),
+            "email", user.getEmail(),
+            "csrfProtection", csrfProtection
+        ));
     }
 
     @GetMapping("/admin/users")
-    public String adminPanel(Model model) {
-        model.addAttribute("users", userService.getAllUsers());
-        model.addAttribute("csrfProtection", csrfProtection);
-        return "admin";
+    public ResponseEntity<List<Map<String, String>>> listUsers() {
+        return ResponseEntity.ok(
+            userService.getAllUsers().stream()
+                .map(u -> Map.of(
+                    "username", u.getUsername(),
+                    "role", u.getRole(),
+                    "email", u.getEmail()
+                ))
+                .toList()
+        );
     }
 
     @PostMapping("/admin/update-role")
-    public String updateRole(@RequestParam String username,
-                             @RequestParam String role,
-                             RedirectAttributes redirectAttributes) {
+    public ResponseEntity<Map<String, String>> updateRole(@RequestParam String username,
+                                                          @RequestParam String role) {
         userService.updateRole(username, role);
-        redirectAttributes.addFlashAttribute("message", username + " → " + role);
-        return "redirect:/admin/users";
+        return ResponseEntity.ok(Map.of("status", "ok", "username", username, "role", role));
     }
 }

@@ -4,24 +4,60 @@ import { useEffect, useState } from "react";
 
 const API = "http://localhost:8080";
 
-// Fetch the anti-CSRF token from the backend. Returns {} when protection is OFF.
 async function getCsrf() {
-  const res = await fetch(`${API}/api/csrf`, { credentials: "include" });
-  if (!res.ok) return {};
-  return res.json();
+  try {
+    const res = await fetch(`${API}/api/csrf`, { credentials: "include" });
+    if (!res.ok) return {};
+    return res.json();
+  } catch {
+    return {};
+  }
+}
+
+function timeAgo(iso) {
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+
+function Linkified({ text }) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        /^https?:\/\//.test(p) ? (
+          <a key={i} href={p}>
+            {p}
+          </a>
+        ) : (
+          <span key={i}>{p}</span>
+        )
+      )}
+    </>
+  );
 }
 
 export default function Home() {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [users, setUsers] = useState([]);
+  const [view, setView] = useState("dashboard");
   const [form, setForm] = useState({ u: "", p: "" });
-  const [target, setTarget] = useState({ username: "", role: "USER" });
   const [err, setErr] = useState("");
   const [toast, setToast] = useState("");
 
-  function flash(msg) {
-    setToast(msg);
+  const [projects, setProjects] = useState([]);
+  const [feed, setFeed] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [users, setUsers] = useState([]);
+  const [secrets, setSecrets] = useState([]);
+  const [revealed, setRevealed] = useState({});
+  const [audit, setAudit] = useState([]);
+  const [target, setTarget] = useState({ username: "", role: "USER" });
+
+  function flash(m) {
+    setToast(m);
     setTimeout(() => setToast(""), 2600);
   }
 
@@ -35,18 +71,35 @@ export default function Home() {
     }
     const data = await res.json();
     setMe(data);
-    if (data.role === "ADMIN") await loadUsers();
+    await Promise.all([loadProjects(), loadFeed()]);
+    if (data.role === "ADMIN") await Promise.all([loadUsers(), loadSecrets(), loadAudit()]);
     setLoading(false);
   }
 
-  async function loadUsers() {
-    const res = await fetch(`${API}/api/admin/users`, { credentials: "include" });
-    if (res.ok) {
-      const list = await res.json();
+  const loadProjects = async () => {
+    const r = await fetch(`${API}/api/projects`, { credentials: "include" });
+    if (r.ok) setProjects(await r.json());
+  };
+  const loadFeed = async () => {
+    const r = await fetch(`${API}/api/feed`, { credentials: "include" });
+    if (r.ok) setFeed(await r.json());
+  };
+  const loadUsers = async () => {
+    const r = await fetch(`${API}/api/admin/users`, { credentials: "include" });
+    if (r.ok) {
+      const list = await r.json();
       setUsers(list);
       if (list.length) setTarget((t) => ({ ...t, username: t.username || list[0].username }));
     }
-  }
+  };
+  const loadSecrets = async () => {
+    const r = await fetch(`${API}/api/admin/secrets`, { credentials: "include" });
+    if (r.ok) setSecrets(await r.json());
+  };
+  const loadAudit = async () => {
+    const r = await fetch(`${API}/api/admin/audit`, { credentials: "include" });
+    if (r.ok) setAudit(await r.json());
+  };
 
   async function login(e) {
     e.preventDefault();
@@ -60,14 +113,31 @@ export default function Home() {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    if (res.ok) refresh();
-    else setErr("Invalid credentials.");
+    if (res.ok) {
+      setView("dashboard");
+      refresh();
+    } else setErr("Invalid username or password.");
   }
 
   async function logout() {
     await fetch(`${API}/api/logout`, { method: "POST", credentials: "include" });
+    setMe(null);
     setUsers([]);
-    refresh();
+    setSecrets([]);
+  }
+
+  async function postMessage() {
+    if (!draft.trim()) return;
+    const body = new URLSearchParams();
+    body.set("text", draft);
+    const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+    const c = await getCsrf();
+    if (c.token) headers[c.headerName || "X-XSRF-TOKEN"] = c.token;
+    const res = await fetch(`${API}/api/feed`, { method: "POST", credentials: "include", headers, body });
+    if (res.ok) {
+      setDraft("");
+      loadFeed();
+    } else flash(`Could not post (${res.status})`);
   }
 
   async function updateRole() {
@@ -75,9 +145,8 @@ export default function Home() {
     body.set("username", target.username);
     body.set("role", target.role);
     const headers = { "Content-Type": "application/x-www-form-urlencoded" };
-    // When CSRF protection is ON the backend hands us a token; echo it back.
-    const csrf = await getCsrf();
-    if (csrf.token) headers[csrf.headerName || "X-XSRF-TOKEN"] = csrf.token;
+    const c = await getCsrf();
+    if (c.token) headers[c.headerName || "X-XSRF-TOKEN"] = c.token;
     const res = await fetch(`${API}/api/admin/update-role`, {
       method: "POST",
       credentials: "include",
@@ -85,110 +154,237 @@ export default function Home() {
       body,
     });
     if (res.ok) {
-      flash(`${target.username} is now ${target.role}`);
-      await loadUsers();
-      refresh();
-    } else {
-      flash(`Update failed (${res.status})`);
-    }
+      flash(`${target.username} set to ${target.role}`);
+      loadUsers();
+      loadAudit();
+    } else flash(`Update failed (${res.status})`);
   }
 
   useEffect(() => {
     refresh();
   }, []);
 
-  return (
-    <>
-      <header>
-        <div className="logo">
-          Dev<span>Forge</span>
-        </div>
-        <div className="spacer" />
-        {me && (
-          <>
-            <span className="muted">
-              {me.username} · {me.role}
-            </span>
-            <button className="ghost" onClick={logout}>
-              Sign out
-            </button>
-          </>
-        )}
-      </header>
+  if (loading) {
+    return (
+      <div className="login-screen">
+        <div className="muted">Loading…</div>
+      </div>
+    );
+  }
 
-      <div className="wrap">
-        {loading ? (
-          <div className="card muted">Loading…</div>
-        ) : !me ? (
+  if (!me) {
+    return (
+      <div className="login-screen">
+        <div className="login-card">
+          <div className="brand-lg">
+            Dev<span>Forge</span>
+          </div>
           <div className="card">
-            <h2>Sign in to DevForge</h2>
             <form onSubmit={login}>
               <label>Username</label>
-              <input
-                value={form.u}
-                onChange={(e) => setForm({ ...form, u: e.target.value })}
-                placeholder="alice"
-              />
+              <input value={form.u} onChange={(e) => setForm({ ...form, u: e.target.value })} placeholder="username" />
               <label>Password</label>
               <input
                 type="password"
                 value={form.p}
                 onChange={(e) => setForm({ ...form, p: e.target.value })}
-                placeholder="••••••••"
+                placeholder="password"
               />
               <div style={{ marginTop: 16 }}>
-                <button type="submit">Sign in</button>
+                <button type="submit" style={{ width: "100%" }}>
+                  Sign in
+                </button>
               </div>
               {err && <div className="err">{err}</div>}
             </form>
             <div className="seed">
-              <strong>Demo accounts</strong>
-              <br />
-              Admin — <code>alice</code> / <code>admin123</code>
-              <br />
-              Developer — <code>bob</code> / <code>user123</code>
-              <br />
-              Attacker — <code>mallory</code> / <code>hack123</code>
+              Demo accounts: <code>alice</code>/<code>admin123</code> · <code>bob</code>/<code>user123</code> ·{" "}
+              <code>mallory</code>/<code>hack123</code>
             </div>
           </div>
-        ) : (
+        </div>
+      </div>
+    );
+  }
+
+  const isAdmin = me.role === "ADMIN";
+  const nav = (id, ico, label) => (
+    <button className={`navitem ${view === id ? "active" : ""}`} onClick={() => setView(id)}>
+      <span className="ico">{ico}</span>
+      {label}
+    </button>
+  );
+
+  const titles = {
+    dashboard: "Dashboard",
+    projects: "Projects",
+    feed: "Team Feed",
+    secrets: "Secrets Vault",
+    team: "Team Administration",
+    audit: "Audit Log",
+  };
+
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="logo">
+          Dev<span>Forge</span>
+        </div>
+        {nav("dashboard", "▚", "Dashboard")}
+        {nav("projects", "❏", "Projects")}
+        {nav("feed", "✉", "Team Feed")}
+        {isAdmin && (
           <>
+            <div className="navgroup-label">Admin</div>
+            {nav("secrets", "🔑", "Secrets Vault")}
+            {nav("team", "⚙", "Team")}
+            {nav("audit", "☰", "Audit Log")}
+          </>
+        )}
+        <div className="spacer" />
+        <div className="userbox">
+          <div className="name">{me.username}</div>
+          <div className="role">{me.email}</div>
+          <div style={{ marginTop: 10 }}>
+            <button className="ghost sm" onClick={logout} style={{ width: "100%" }}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <div className="main">
+        <div className="topbar">
+          <h1>{titles[view]}</h1>
+          <div className="spacer" />
+          <span className={`badge ${me.role.toLowerCase()}`}>{me.role}</span>
+        </div>
+
+        <div className="content">
+          {view === "dashboard" && (
+            <>
+              <div className="grid stats">
+                <div className="stat">
+                  <div className="n">{projects.length}</div>
+                  <div className="l">Projects</div>
+                </div>
+                <div className="stat">
+                  <div className="n">{feed.length}</div>
+                  <div className="l">Feed posts</div>
+                </div>
+                {isAdmin && (
+                  <div className="stat">
+                    <div className="n">{users.length}</div>
+                    <div className="l">Team members</div>
+                  </div>
+                )}
+                <div className="stat">
+                  <div className="n">{me.role}</div>
+                  <div className="l">Your access</div>
+                </div>
+              </div>
+              <div className="card">
+                <h2 className="sec">Recent activity</h2>
+                {feed.slice(0, 3).map((m) => (
+                  <div className="feed-item" key={m.id}>
+                    <div className="feed-head">
+                      <span className="who">{m.author}</span>
+                      <span className="when">{timeAgo(m.createdAt)}</span>
+                    </div>
+                    <div className="feed-text">
+                      <Linkified text={m.text} />
+                    </div>
+                  </div>
+                ))}
+                <div style={{ marginTop: 12 }}>
+                  <button className="ghost sm" onClick={() => setView("feed")}>
+                    Open Team Feed →
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {view === "projects" && (
             <div className="card">
-              <h2>Your profile</h2>
               <table>
+                <thead>
+                  <tr>
+                    <th>Project</th>
+                    <th>Status</th>
+                    <th>Visibility</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  <tr>
-                    <th>User</th>
-                    <td>{me.username}</td>
-                  </tr>
-                  <tr>
-                    <th>Role</th>
-                    <td>
-                      <span className={`badge ${me.role.toLowerCase()}`}>{me.role}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>Email</th>
-                    <td>{me.email}</td>
-                  </tr>
-                  <tr>
-                    <th>CSRF protection</th>
-                    <td>
-                      {me.csrfProtection ? (
-                        <span className="pill on">ENABLED</span>
-                      ) : (
-                        <span className="pill off">DISABLED (vulnerable)</span>
-                      )}
-                    </td>
-                  </tr>
+                  {projects.map((p) => (
+                    <tr key={p.name}>
+                      <td>{p.name}</td>
+                      <td>
+                        <span className={`badge ${p.status}`}>{p.status}</span>
+                      </td>
+                      <td className="muted">{p.visibility}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
+          )}
 
-            {me.role === "ADMIN" ? (
+          {view === "feed" && (
+            <>
               <div className="card">
-                <h2>Team administration</h2>
-                <p className="muted">Manage developer access levels for the DevForge org.</p>
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Share something with the team…"
+                />
+                <div style={{ marginTop: 10, textAlign: "right" }}>
+                  <button onClick={postMessage}>Post</button>
+                </div>
+              </div>
+              <div className="card">
+                {feed.map((m) => (
+                  <div className="feed-item" key={m.id}>
+                    <div className="feed-head">
+                      <span className="who">{m.author}</span>
+                      <span className="when">{timeAgo(m.createdAt)}</span>
+                    </div>
+                    <div className="feed-text">
+                      <Linkified text={m.text} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {view === "secrets" && isAdmin && (
+            <div className="card">
+              <h2 className="sec">Production secrets</h2>
+              <p className="muted" style={{ marginTop: -6, marginBottom: 14 }}>
+                Restricted to workspace administrators.
+              </p>
+              {secrets.map((s) => (
+                <div className="secret-row" key={s.name}>
+                  <div className="k">{s.name}</div>
+                  <div className="v">{revealed[s.name] ? s.value : "•".repeat(18)}</div>
+                  <span className={`badge ${s.scope === "production" ? "production" : "development"}`}>
+                    {s.scope}
+                  </span>
+                  <button
+                    className="ghost sm"
+                    onClick={() => setRevealed((r) => ({ ...r, [s.name]: !r[s.name] }))}
+                  >
+                    {revealed[s.name] ? "Hide" : "Reveal"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {view === "team" && isAdmin && (
+            <>
+              <div className="card">
                 <table>
                   <thead>
                     <tr>
@@ -201,7 +397,7 @@ export default function Home() {
                     {users.map((u) => (
                       <tr key={u.username}>
                         <td>{u.username}</td>
-                        <td>{u.email}</td>
+                        <td className="muted">{u.email}</td>
                         <td>
                           <span className={`badge ${u.role.toLowerCase()}`}>{u.role}</span>
                         </td>
@@ -209,8 +405,9 @@ export default function Home() {
                     ))}
                   </tbody>
                 </table>
-                <hr />
-                <h2 style={{ fontSize: 14 }}>Update a member&apos;s role</h2>
+              </div>
+              <div className="card">
+                <h2 className="sec">Change a member&apos;s role</h2>
                 <div className="row">
                   <div>
                     <label>Member</label>
@@ -226,34 +423,46 @@ export default function Home() {
                     </select>
                   </div>
                   <div>
-                    <label>New role</label>
-                    <select
-                      value={target.role}
-                      onChange={(e) => setTarget({ ...target, role: e.target.value })}
-                    >
+                    <label>Role</label>
+                    <select value={target.role} onChange={(e) => setTarget({ ...target, role: e.target.value })}>
                       <option value="USER">USER</option>
                       <option value="ADMIN">ADMIN</option>
                     </select>
                   </div>
                   <div style={{ flex: "0 0 auto" }}>
-                    <button onClick={updateRole}>Apply</button>
+                    <button onClick={updateRole}>Save</button>
                   </div>
                 </div>
-                <div className="muted" style={{ marginTop: 8 }}>
-                  Issues a state-changing <code>POST /api/admin/update-role</code>.
-                </div>
               </div>
-            ) : (
-              <div className="card muted">
-                You are signed in as a standard developer. The team administration panel is
-                only visible to admins.
-              </div>
-            )}
-          </>
-        )}
+            </>
+          )}
+
+          {view === "audit" && isAdmin && (
+            <div className="card">
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.map((a, i) => (
+                    <tr key={i}>
+                      <td className="muted">{timeAgo(a.createdAt)}</td>
+                      <td>{a.actor}</td>
+                      <td>{a.action}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {toast && <div className="toast">{toast}</div>}
-    </>
+    </div>
   );
 }

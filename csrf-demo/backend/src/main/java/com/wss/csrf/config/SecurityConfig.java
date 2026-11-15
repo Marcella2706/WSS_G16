@@ -1,8 +1,6 @@
 package com.wss.csrf.config;
 
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
+import com.wss.csrf.security.CsrfTokenFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -13,14 +11,10 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
 import java.util.List;
 
 @Configuration
@@ -40,7 +34,7 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN"));
+        config.setAllowedHeaders(List.of("Content-Type", "X-CSRF-TOKEN"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
@@ -50,13 +44,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
+        http.csrf(csrf -> csrf.disable());
+
         if (csrfProtection) {
-            http.csrf(csrf -> csrf
-                    .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                    .ignoringRequestMatchers("/api/login", "/api/logout"));
-            http.addFilterAfter(new CsrfCookieFilter(), UsernamePasswordAuthenticationFilter.class);
-        } else {
-            http.csrf(csrf -> csrf.disable());
+            http.addFilterAfter(new CsrfTokenFilter(), UsernamePasswordAuthenticationFilter.class);
         }
 
         http
@@ -93,15 +84,5 @@ public class SecurityConfig {
             );
 
         return http.build();
-    }
-
-    static final class CsrfCookieFilter extends OncePerRequestFilter {
-        @Override
-        protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
-                throws ServletException, IOException {
-            CsrfToken token = (CsrfToken) req.getAttribute("_csrf");
-            if (token != null) token.getToken();
-            chain.doFilter(req, res);
-        }
     }
 }

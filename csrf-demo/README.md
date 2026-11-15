@@ -107,25 +107,32 @@ including one forged by a page the user never meant to interact with.
 
 ---
 
-## (d) Mitigation implemented — anti-CSRF (synchronizer / double-submit) token
+## (d) Mitigation implemented — a custom anti-CSRF (synchronizer) token
 
-Stop the backend and restart it with protection enabled:
+Spring's built-in CSRF support is left disabled; the defence is implemented by hand in
+[`CsrfTokenFilter.java`](backend/src/main/java/com/wss/csrf/security/CsrfTokenFilter.java)
+so the logic is fully ours. Restart the backend with it enabled:
 ```bash
 cd backend
 mvn spring-boot:run -Dspring-boot.run.arguments=--app.csrf.protection=true
 ```
 
-Now the server requires a secret CSRF token on every state-changing POST
-(see `SecurityConfig.java`):
+A random token is generated with `SecureRandom`, stored in the user's session, and
+handed to the frontend via `GET /api/csrf`. The filter then rejects any state-changing
+request (POST/DELETE, except login/logout) whose `X-CSRF-TOKEN` header doesn't match the
+session token (compared in constant time):
 
 ```java
-http.csrf(csrf -> csrf
-        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-        .ignoringRequestMatchers("/api/login", "/api/logout"));
+String expected = session == null ? null : (String) session.getAttribute(SESSION_ATTR);
+String actual   = req.getHeader(HEADER);
+if (expected == null || actual == null || !constantTimeEquals(expected, actual)) {
+    res.sendError(HttpServletResponse.SC_FORBIDDEN, "CSRF token missing or invalid");
+    return;
+}
 ```
 
-- The **legitimate** Next.js app reads the token from `GET /api/csrf` and echoes it in
-  the `X-XSRF-TOKEN` header → its requests succeed.
+- The **legitimate** Next.js app reads the token from `GET /api/csrf` and sends it in the
+  `X-CSRF-TOKEN` header → its requests succeed.
 - The **attacker's** `team-perks.html` cannot read the token (it lives on another
   origin; the same-origin policy blocks cross-origin reads, and a plain `<form>` cannot
   set a custom header). Its forged POST arrives **without the token** → it is rejected:

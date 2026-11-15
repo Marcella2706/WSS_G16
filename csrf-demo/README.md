@@ -1,0 +1,151 @@
+# DevForge — CSRF Privilege-Escalation Demo
+
+A small developer-team portal built to demonstrate a **Cross-Site Request Forgery
+(CSRF)** vulnerability and its mitigation.
+
+**Scenario.** DevForge is a team portal where admins manage developer access
+levels. An attacker (`mallory`, an ordinary developer) tricks a logged-in **admin**
+(`alice`) into opening a booby-trapped page. That page silently forges a POST that
+**promotes `mallory` to ADMIN** — a durable privilege escalation stored in Postgres.
+
+- **Variant:** CSRF → **POST-based forged action (auto-submitting form)**
+- **Stack:** Next.js (frontend) · Spring Boot + Spring Security (backend) · Postgres
+
+---
+
+## Ownership declaration (Table 3)
+
+| Member | GitHub | Vulnerability category | Variant implemented |
+|--------|--------|------------------------|---------------------|
+| **Saumya** | **Marcella2706** | **CSRF** | **POST-based forged action (auto-submitting form)** |
+| _(member 2)_ | _(github)_ | _(category)_ | _(variant)_ |
+| _(member 3)_ | _(github)_ | _(category)_ | _(variant)_ |
+| _(member 4)_ | _(github)_ | _(category)_ | _(variant)_ |
+
+> This repository documents **Saumya's** variant. Other members fill in their rows.
+
+---
+
+## Running it
+
+**1. Start Postgres**
+```bash
+docker compose up -d
+```
+
+**2. Start the backend (vulnerable mode is the default)**
+```bash
+cd backend
+mvn spring-boot:run
+```
+Backend runs on `http://localhost:8080`.
+
+**3. Start the frontend**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Portal runs on `http://localhost:3000`.
+
+**Demo accounts**
+
+| User | Password | Role | Part |
+|------|----------|------|------|
+| `alice` | `admin123` | ADMIN | the victim (a logged-in admin) |
+| `bob` | `user123` | USER | an ordinary developer |
+| `mallory` | `hack123` | USER | the attacker |
+
+---
+
+## The exploit (what to show in the video)
+
+### (a) Vulnerable implementation
+The state-changing endpoint in
+[`AppController.java`](backend/src/main/java/com/wss/csrf/controller/AppController.java):
+
+```java
+@PostMapping("/admin/update-role")
+public ResponseEntity<Map<String,Object>> updateRole(@RequestParam String username,
+                                                      @RequestParam String role) {
+    userService.updateRole(username, role);   // promotes the user, no proof of intent
+    ...
+}
+```
+
+In [`SecurityConfig.java`](backend/src/main/java/com/wss/csrf/config/SecurityConfig.java),
+when `app.csrf.protection=false`, CSRF is **disabled**: `http.csrf(csrf -> csrf.disable())`.
+The only thing gating the endpoint is the session cookie.
+
+### (b) Working exploit
+1. Log in to the portal as **`alice`** (admin). She now has a live session cookie.
+2. In the **same browser**, open the attacker page
+   [`attacker/evil.html`](attacker/evil.html) (serve it from a different origin, e.g.):
+   ```bash
+   cd attacker
+   python3 -m http.server 5500      # open http://localhost:5500/evil.html
+   ```
+3. The page auto-submits this forged request — no click needed:
+   ```http
+   POST /api/admin/update-role HTTP/1.1
+   Host: localhost:8080
+   Content-Type: application/x-www-form-urlencoded
+   Cookie: JSESSIONID=<alice's session>      ← added automatically by the browser
+
+   username=mallory&role=ADMIN
+   ```
+4. Log out, log back in as **`mallory`** → she is now **ADMIN**. Escalation persisted.
+
+### (c) Root cause
+A **state-changing request is accepted with no proof of intent**. The server trusts
+the ambient session cookie, which the browser attaches to *any* request to the site —
+including one forged by a page the user never meant to interact with.
+
+---
+
+## (d) Mitigation implemented — anti-CSRF (synchronizer / double-submit) token
+
+Stop the backend and restart it with protection enabled:
+```bash
+cd backend
+mvn spring-boot:run -Dspring-boot.run.arguments=--app.csrf.protection=true
+```
+
+Now the server requires a secret CSRF token on every state-changing POST
+(see `SecurityConfig.java`):
+
+```java
+http.csrf(csrf -> csrf
+        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+        .ignoringRequestMatchers("/api/login", "/api/logout"));
+```
+
+- The **legitimate** Next.js app reads the token from `GET /api/csrf` and echoes it in
+  the `X-XSRF-TOKEN` header → its requests succeed.
+- The **attacker's** `evil.html` cannot read the token (it lives on another origin;
+  the same-origin policy blocks cross-origin reads, and a plain `<form>` cannot set a
+  custom header). Its forged POST arrives **without the token** → the server rejects it:
+
+```
+HTTP/1.1 403 Forbidden     (same payload now fails — screenshot this for item d)
+```
+
+Re-run the exploit from step (b): `mallory` stays a `USER`.
+
+---
+
+## (e) Other CSRF mitigations (theory)
+
+- **SameSite cookies.** Marking the session cookie `SameSite=Strict`/`Lax` tells the
+  browser not to attach it to cross-site requests, so a forged POST from another site
+  arrives with no session and is treated as unauthenticated. (This lab runs same-site
+  on `localhost`, so SameSite=Lax still allows it — hence the token is the real fix.)
+- **Re-authentication for sensitive actions.** Requiring the user to re-enter their
+  password (or a step-up/MFA prompt) before a high-impact action means an attacker
+  who only has the ambient cookie cannot complete it.
+- **Avoid state-changing GET requests.** GETs are trivially forgeable (`<img>`, links).
+  Keeping all mutations on POST/PUT/DELETE guarded by a token removes that easy vector.
+
+All of these work by forcing the request to carry **something an attacker's page
+cannot supply** — a token it can't read, a cookie the browser won't send cross-site,
+or a fresh credential — i.e. *proof the user actually intended the action*.

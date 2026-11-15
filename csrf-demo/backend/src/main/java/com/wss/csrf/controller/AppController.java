@@ -104,12 +104,19 @@ public class AppController {
         return ResponseEntity.ok(
             audit.findAllByOrderByCreatedAtDesc().stream()
                 .map(a -> Map.<String, Object>of(
+                    "id", a.getId(),
                     "actor", a.getActor(),
                     "action", a.getAction(),
                     "createdAt", a.getCreatedAt().toString()
                 ))
                 .toList()
         );
+    }
+
+    @DeleteMapping("/admin/audit/{id}")
+    public ResponseEntity<Map<String, String>> deleteAudit(@PathVariable Long id) {
+        audit.deleteById(id);
+        return ResponseEntity.ok(Map.of("status", "ok"));
     }
 
     @PostMapping("/admin/update-role")

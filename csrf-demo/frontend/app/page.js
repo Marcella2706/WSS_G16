@@ -101,6 +101,19 @@ export default function Home() {
     if (r.ok) setAudit(await r.json());
   };
 
+  async function deleteAudit(id) {
+    const headers = {};
+    const c = await getCsrf();
+    if (c.token) headers[c.headerName || "X-XSRF-TOKEN"] = c.token;
+    const res = await fetch(`${API}/api/admin/audit/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers,
+    });
+    if (res.ok) loadAudit();
+    else flash(`Delete failed (${res.status})`);
+  }
+
   async function login(e) {
     e.preventDefault();
     setErr("");
@@ -447,14 +460,25 @@ export default function Home() {
                     <th>When</th>
                     <th>Actor</th>
                     <th>Action</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {audit.map((a, i) => (
-                    <tr key={i}>
+                  {audit.map((a) => (
+                    <tr key={a.id}>
                       <td className="muted">{timeAgo(a.createdAt)}</td>
                       <td>{a.actor}</td>
                       <td>{a.action}</td>
+                      <td style={{ textAlign: "right", width: 40 }}>
+                        <button
+                          className="icon-del"
+                          title="Delete entry"
+                          aria-label="Delete entry"
+                          onClick={() => deleteAudit(a.id)}
+                        >
+                          🗑
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

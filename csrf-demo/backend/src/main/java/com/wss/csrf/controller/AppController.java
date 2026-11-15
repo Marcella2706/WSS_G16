@@ -5,12 +5,13 @@ import com.wss.csrf.model.AuditEntry;
 import com.wss.csrf.model.Message;
 import com.wss.csrf.repository.AuditRepository;
 import com.wss.csrf.repository.MessageRepository;
+import com.wss.csrf.security.CsrfTokenFilter;
 import com.wss.csrf.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
@@ -44,9 +45,13 @@ public class AppController {
 
     @GetMapping("/csrf")
     public ResponseEntity<Map<String, String>> csrf(HttpServletRequest request) {
-        CsrfToken token = (CsrfToken) request.getAttribute("_csrf");
-        if (token == null) return ResponseEntity.ok(Map.of());
-        return ResponseEntity.ok(Map.of("token", token.getToken(), "headerName", token.getHeaderName()));
+        HttpSession session = request.getSession(true);
+        String token = (String) session.getAttribute(CsrfTokenFilter.SESSION_ATTR);
+        if (token == null) {
+            token = CsrfTokenFilter.newToken();
+            session.setAttribute(CsrfTokenFilter.SESSION_ATTR, token);
+        }
+        return ResponseEntity.ok(Map.of("token", token, "headerName", CsrfTokenFilter.HEADER));
     }
 
     @GetMapping("/projects")

@@ -39,9 +39,13 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        // The legitimate Next.js frontend. Note: a CSRF attack does NOT need CORS —
-        // an auto-submitting <form> is a "simple request" the browser sends anyway.
-        config.setAllowedOrigins(List.of("http://localhost:3000"));
+        // Permissive CORS (reflects any origin) — deliberately NOT used as a CSRF
+        // defence. CORS only governs whether JavaScript may READ a cross-origin
+        // response; it does not stop a browser from SENDING an auto-submitting
+        // <form> POST and attaching the session cookie. Locking CORS down to one
+        // origin would merely *mask* the CSRF flaw at a different layer, so we
+        // leave it open and let the anti-CSRF token be the real control.
+        config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
         config.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN"));
         config.setAllowCredentials(true);

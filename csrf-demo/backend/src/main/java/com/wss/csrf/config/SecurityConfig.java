@@ -1,5 +1,9 @@
 package com.wss.csrf.config;
 
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -8,19 +12,22 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.filter.OncePerRequestFilter;
 
+import java.io.IOException;
 import java.util.List;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
+    /** Flip in application.properties. false = vulnerable, true = CSRF tokens enforced. */
     @Value("${app.csrf.protection:false}")
     private boolean csrfProtection;
 
@@ -32,9 +39,11 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
+        // The legitimate Next.js frontend. Note: a CSRF attack does NOT need CORS —
+        // an auto-submitting <form> is a "simple request" the browser sends anyway.
         config.setAllowedOrigins(List.of("http://localhost:3000"));
         config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
-        config.setAllowedHeaders(List.of("*"));
+        config.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
@@ -43,14 +52,26 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        if (!csrfProtection) {
+
+        if (csrfProtection) {
+            // MITIGATION: double-submit cookie token. The token is handed to the
+            // SPA (readable XSRF-TOKEN cookie + /api/csrf endpoint) and must be
+            // echoed back in the X-XSRF-TOKEN header on every state-changing POST.
+            // A forged cross-site <form> cannot read the token, so it is rejected.
+            http.csrf(csrf -> csrf
+                    .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                    .ignoringRequestMatchers("/api/login", "/api/logout"));
+            // Force Spring to materialise the deferred token so the cookie is emitted.
+            http.addFilterAfter(new CsrfCookieFilter(), UsernamePasswordAuthenticationFilter.class);
+        } else {
+            // VULNERABLE: no anti-CSRF token required at all.
             http.csrf(csrf -> csrf.disable());
         }
 
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/login", "/api/logout").permitAll()
+                .requestMatchers("/api/login", "/api/logout", "/api/csrf").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
@@ -77,9 +98,20 @@ public class SecurityConfig {
                 })
             )
             .exceptionHandling(ex -> ex
-                .authenticationEntryPoint((req, res, authEx) -> res.sendError(401))
+                .authenticationEntryPoint((req, res, authEx) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED))
             );
 
         return http.build();
+    }
+
+    /** Reads the CsrfToken so the deferred token is generated and the cookie is sent. */
+    static final class CsrfCookieFilter extends OncePerRequestFilter {
+        @Override
+        protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+                throws ServletException, IOException {
+            CsrfToken token = (CsrfToken) req.getAttribute("_csrf");
+            if (token != null) token.getToken();
+            chain.doFilter(req, res);
+        }
     }
 }

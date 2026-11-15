@@ -124,6 +124,8 @@ export default function Home() {
     setMe(null);
     setUsers([]);
     setSecrets([]);
+    setForm({ u: "", p: "" });
+    setErr("");
   }
 
   async function postMessage() {

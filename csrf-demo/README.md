@@ -134,6 +134,14 @@ Re-run the exploit from step (b): `mallory` stays a `USER`.
 
 ---
 
+### A note on CORS (common confusion)
+
+CORS is **not** a CSRF defence. CORS only decides whether JavaScript may *read* a
+cross-origin response — it does not stop a browser from *sending* an auto-submitting
+`<form>` POST and attaching the session cookie. This backend therefore keeps CORS
+permissive on purpose, so the forged request genuinely reaches the handler and the
+**anti-CSRF token** is shown to be the real control (not an incidental origin check).
+
 ## (e) Other CSRF mitigations (theory)
 
 - **SameSite cookies.** Marking the session cookie `SameSite=Strict`/`Lax` tells the

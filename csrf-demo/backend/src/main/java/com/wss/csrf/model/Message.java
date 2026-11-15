@@ -3,8 +3,6 @@ package com.wss.csrf.model;
 import jakarta.persistence.*;
 import java.time.Instant;
 
-/** A post in the DevForge team feed. The feed is the social-engineering channel:
- *  a normal user can drop a link here that an admin will later click. */
 @Entity
 @Table(name = "messages")
 public class Message {

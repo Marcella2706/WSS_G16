@@ -27,7 +27,6 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
-    /** Flip in application.properties. false = vulnerable, true = CSRF tokens enforced. */
     @Value("${app.csrf.protection:false}")
     private boolean csrfProtection;
 
@@ -39,12 +38,6 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        // Permissive CORS (reflects any origin) — deliberately NOT used as a CSRF
-        // defence. CORS only governs whether JavaScript may READ a cross-origin
-        // response; it does not stop a browser from SENDING an auto-submitting
-        // <form> POST and attaching the session cookie. Locking CORS down to one
-        // origin would merely *mask* the CSRF flaw at a different layer, so we
-        // leave it open and let the anti-CSRF token be the real control.
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
         config.setAllowedHeaders(List.of("Content-Type", "X-XSRF-TOKEN"));
@@ -58,17 +51,11 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
         if (csrfProtection) {
-            // MITIGATION: double-submit cookie token. The token is handed to the
-            // SPA (readable XSRF-TOKEN cookie + /api/csrf endpoint) and must be
-            // echoed back in the X-XSRF-TOKEN header on every state-changing POST.
-            // A forged cross-site <form> cannot read the token, so it is rejected.
             http.csrf(csrf -> csrf
                     .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                     .ignoringRequestMatchers("/api/login", "/api/logout"));
-            // Force Spring to materialise the deferred token so the cookie is emitted.
             http.addFilterAfter(new CsrfCookieFilter(), UsernamePasswordAuthenticationFilter.class);
         } else {
-            // VULNERABLE: no anti-CSRF token required at all.
             http.csrf(csrf -> csrf.disable());
         }
 
@@ -108,7 +95,6 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /** Reads the CsrfToken so the deferred token is generated and the cookie is sent. */
     static final class CsrfCookieFilter extends OncePerRequestFilter {
         @Override
         protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)

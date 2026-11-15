@@ -3,9 +3,6 @@ package com.wss.csrf.model;
 import jakarta.persistence.*;
 import java.time.Instant;
 
-/** A record of a sensitive action. Crucially, a CSRF-forged change is logged
- *  against the VICTIM (the admin whose session was abused) — so the audit trail
- *  wrongly blames alice for promoting the attacker. */
 @Entity
 @Table(name = "audit_log")
 public class AuditEntry {

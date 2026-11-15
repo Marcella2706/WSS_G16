@@ -5,11 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/**
- * A DevForge team member, persisted in Postgres.
- * The {@code role} column is what a CSRF attack targets: flipping a USER to ADMIN
- * is a durable privilege escalation that survives a server restart.
- */
 @Entity
 @Table(name = "app_users")
 public class AppUser {
@@ -26,7 +21,7 @@ public class AppUser {
     @Column(nullable = false)
     private String email;
 
-    protected AppUser() { } // for JPA
+    protected AppUser() { }
 
     public AppUser(String username, String password, String role, String email) {
         this.username = username;

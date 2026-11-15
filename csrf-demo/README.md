@@ -3,10 +3,12 @@
 A small developer-team portal built to demonstrate a **Cross-Site Request Forgery
 (CSRF)** vulnerability and its mitigation.
 
-**Scenario.** DevForge is a team portal where admins manage developer access
-levels. An attacker (`mallory`, an ordinary developer) tricks a logged-in **admin**
-(`alice`) into opening a booby-trapped page. That page silently forges a POST that
-**promotes `mallory` to ADMIN** — a durable privilege escalation stored in Postgres.
+**Scenario.** DevForge is a team portal with projects, a team feed, and an
+admin-only area (a secrets vault, user management, and an audit log). `mallory`,
+an ordinary developer, posts a tempting "free JetBrains licences" link in the team
+feed. When `alice` (an admin) clicks it while logged in, the page silently forges a
+POST that **promotes `mallory` to ADMIN** — stored in Postgres and logged against
+`alice`. `mallory` then signs in and reads every production secret.
 
 - **Variant:** CSRF → **POST-based forged action (auto-submitting form)**
 - **Stack:** Next.js (frontend) · Spring Boot + Spring Security (backend) · Postgres
@@ -62,30 +64,31 @@ Portal runs on `http://localhost:3000`.
 
 ### (a) Vulnerable implementation
 The state-changing endpoint in
-[`AppController.java`](backend/src/main/java/com/wss/csrf/controller/AppController.java):
+[`AppController.java`](backend/src/main/java/com/wss/csrf/controller/AppController.java)
+changes a user's role over POST:
 
 ```java
 @PostMapping("/admin/update-role")
 public ResponseEntity<Map<String,Object>> updateRole(@RequestParam String username,
-                                                      @RequestParam String role) {
-    userService.updateRole(username, role);   // promotes the user, no proof of intent
-    ...
-}
+                                                      @RequestParam String role,
+                                                      Principal actor) { ... }
 ```
 
 In [`SecurityConfig.java`](backend/src/main/java/com/wss/csrf/config/SecurityConfig.java),
 when `app.csrf.protection=false`, CSRF is **disabled**: `http.csrf(csrf -> csrf.disable())`.
-The only thing gating the endpoint is the session cookie.
+The only thing gating the endpoint is the session cookie — no proof of intent.
 
 ### (b) Working exploit
-1. Log in to the portal as **`alice`** (admin). She now has a live session cookie.
-2. In the **same browser**, open the attacker page
-   [`attacker/evil.html`](attacker/evil.html) (serve it from a different origin, e.g.):
+1. Serve the attacker page from a different origin:
    ```bash
    cd attacker
-   python3 -m http.server 5500      # open http://localhost:5500/evil.html
+   python3 -m http.server 5500
    ```
-3. The page auto-submits this forged request — no click needed:
+2. Log in to the portal as **`alice`** (admin). Open **Team Feed** — `mallory`'s post
+   links to `http://localhost:5500/team-perks.html`.
+3. Click the link. [`team-perks.html`](attacker/team-perks.html) looks like a perk
+   page but silently submits this forged request into a hidden iframe, then redirects
+   `alice` back to DevForge so nothing looks wrong:
    ```http
    POST /api/admin/update-role HTTP/1.1
    Host: localhost:8080
@@ -94,7 +97,8 @@ The only thing gating the endpoint is the session cookie.
 
    username=mallory&role=ADMIN
    ```
-4. Log out, log back in as **`mallory`** → she is now **ADMIN**. Escalation persisted.
+4. Sign in as **`mallory`** → she is now **ADMIN** and can open the **Secrets Vault**.
+   The **Audit Log** records the change as done by `alice`.
 
 ### (c) Root cause
 A **state-changing request is accepted with no proof of intent**. The server trusts
@@ -122,9 +126,9 @@ http.csrf(csrf -> csrf
 
 - The **legitimate** Next.js app reads the token from `GET /api/csrf` and echoes it in
   the `X-XSRF-TOKEN` header → its requests succeed.
-- The **attacker's** `evil.html` cannot read the token (it lives on another origin;
-  the same-origin policy blocks cross-origin reads, and a plain `<form>` cannot set a
-  custom header). Its forged POST arrives **without the token** → the server rejects it:
+- The **attacker's** `team-perks.html` cannot read the token (it lives on another
+  origin; the same-origin policy blocks cross-origin reads, and a plain `<form>` cannot
+  set a custom header). Its forged POST arrives **without the token** → it is rejected:
 
 ```
 HTTP/1.1 403 Forbidden     (same payload now fails — screenshot this for item d)

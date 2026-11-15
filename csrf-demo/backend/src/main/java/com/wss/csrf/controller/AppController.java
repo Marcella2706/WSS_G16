@@ -7,7 +7,6 @@ import com.wss.csrf.repository.AuditRepository;
 import com.wss.csrf.repository.MessageRepository;
 import com.wss.csrf.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -27,16 +26,11 @@ public class AppController {
     private final MessageRepository messages;
     private final AuditRepository audit;
 
-    @Value("${app.csrf.protection:false}")
-    private boolean csrfProtection;
-
     public AppController(UserService userService, MessageRepository messages, AuditRepository audit) {
         this.userService = userService;
         this.messages = messages;
         this.audit = audit;
     }
-
-    // --- Identity -----------------------------------------------------------
 
     @GetMapping("/me")
     public ResponseEntity<Map<String, Object>> me(@AuthenticationPrincipal UserDetails userDetails) {
@@ -44,20 +38,16 @@ public class AppController {
         return ResponseEntity.ok(Map.of(
             "username", user.getUsername(),
             "role", user.getRole(),
-            "email", user.getEmail(),
-            "csrfProtection", csrfProtection
+            "email", user.getEmail()
         ));
     }
 
-    /** Hands the anti-CSRF token to the legitimate SPA. Empty when protection is OFF. */
     @GetMapping("/csrf")
     public ResponseEntity<Map<String, String>> csrf(HttpServletRequest request) {
         CsrfToken token = (CsrfToken) request.getAttribute("_csrf");
         if (token == null) return ResponseEntity.ok(Map.of());
         return ResponseEntity.ok(Map.of("token", token.getToken(), "headerName", token.getHeaderName()));
     }
-
-    // --- Projects (visible to any signed-in member) -------------------------
 
     @GetMapping("/projects")
     public ResponseEntity<List<Map<String, String>>> projects() {
@@ -68,8 +58,6 @@ public class AppController {
             Map.of("name", "data-pipeline", "status", "development", "visibility", "internal")
         ));
     }
-
-    // --- Team feed (the social-engineering channel) -------------------------
 
     @GetMapping("/feed")
     public ResponseEntity<List<Map<String, Object>>> feed() {
@@ -92,8 +80,6 @@ public class AppController {
         return ResponseEntity.ok(Map.of("id", saved.getId(), "status", "ok"));
     }
 
-    // --- Admin area ---------------------------------------------------------
-
     @GetMapping("/admin/users")
     public ResponseEntity<List<Map<String, String>>> listUsers() {
         return ResponseEntity.ok(
@@ -103,8 +89,6 @@ public class AppController {
         );
     }
 
-    /** The payoff: production secrets only an ADMIN can read. After a successful
-     *  CSRF escalation, the attacker gains access to everything here. */
     @GetMapping("/admin/secrets")
     public ResponseEntity<List<Map<String, String>>> secrets() {
         return ResponseEntity.ok(List.of(
@@ -128,14 +112,6 @@ public class AppController {
         );
     }
 
-    /**
-     * === THE VULNERABLE CODE PATH ===
-     * A state-changing action (privilege escalation) over POST. When
-     * app.csrf.protection=false, Spring requires NO proof of intent: the only
-     * gate is the session cookie, which the browser attaches to ANY request —
-     * including one forged by an attacker's page. The change is then logged
-     * against the victim admin, hiding who really triggered it.
-     */
     @PostMapping("/admin/update-role")
     public ResponseEntity<Map<String, Object>> updateRole(@RequestParam String username,
                                                           @RequestParam String role,
